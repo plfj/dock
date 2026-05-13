@@ -1,0 +1,70 @@
+# =============================================================================
+# .github/workflows/rescan-and-retag.yml
+# =============================================================================
+# Manual workflow for:
+#   1. Re-scanning already-published images with Trivy (no rebuild)
+#   2. Promoting a SHA-tagged image to a named release tag
+# =============================================================================
+
+name: Rescan & Retag
+
+on:
+  workflow_dispatch:
+    inputs:
+      ubuntu_version:
+        description: "Ubuntu version to rescan/retag"
+        required: true
+        default: "24.04"
+        type: choice
+        options:
+          - "22.04"
+          - "24.04"
+          - "25.04"
+          - "26.04"
+      new_tag:
+        description: "Optional new tag to apply (e.g. stable, v1.2.0). Leave blank to skip retag."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  rescan:
+    name: Rescan ubuntu-${{ github.event.inputs.ubuntu_version }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull image
+        run: |
+          docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ubuntu-${{ github.event.inputs.ubuntu_version }}"
+
+      - name: Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: >-
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ubuntu-${{ github.event.inputs.ubuntu_version }}
+          format: table
+          severity: CRITICAL,HIGH,MEDIUM
+          ignore-unfixed: true
+
+      - name: Retag image (if requested)
+        if: github.event.inputs.new_tag != ''
+        run: |
+          SRC="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ubuntu-${{ github.event.inputs.ubuntu_version }}"
+          DST="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.new_tag }}"
+          docker tag "${SRC}" "${DST}"
+          docker push "${DST}"
+          echo "::notice::Pushed ${DST}"
