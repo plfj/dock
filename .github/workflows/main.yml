@@ -167,18 +167,18 @@ jobs:
     steps:
       # ── Checkout ─────────────────────────────────────────────────────────────
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       # ── QEMU (multi-arch support, future-proof) ───────────────────────────────
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       # ── Docker Buildx ─────────────────────────────────────────────────────────
       - name: Set up Docker Buildx
         id: buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
         with:
           driver-opts: |
             image=moby/buildkit:buildx-stable-1
@@ -187,7 +187,7 @@ jobs:
       # ── Login to GHCR (skip on PR) ────────────────────────────────────────────
       - name: Log in to GitHub Container Registry
         if: needs.prepare.outputs.should_push == 'true'
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -196,7 +196,7 @@ jobs:
       # ── Compute Docker image tags & labels ────────────────────────────────────
       - name: Extract metadata (tags, labels)
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           flavor: |
@@ -219,7 +219,7 @@ jobs:
       # ── Build (+ push if not PR) ──────────────────────────────────────────────
       - name: Build and push image
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
@@ -293,7 +293,7 @@ jobs:
         continue-on-error: true   # never block publish on scan findings
 
       - name: Upload Trivy SARIF results
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4.35.2
         if: always() && needs.prepare.outputs.should_push == 'true'
         with:
           sarif_file: trivy-${{ matrix.ubuntu_version }}.sarif
@@ -331,7 +331,7 @@ jobs:
     if: needs.prepare.outputs.should_push == 'true'
     steps:
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
