@@ -1,0 +1,377 @@
+# =============================================================================
+# .github/workflows/build-and-publish.yml
+# =============================================================================
+# Builds Ubuntu 22.04 · 24.04 · 25.04 · 26.04 GitHub Actions runner images
+# and publishes them to GitHub Container Registry (ghcr.io).
+#
+# Triggers
+# ──────────
+#   • push to main / master
+#   • pull_request targeting main / master
+#   • weekly schedule (Sunday 00:00 UTC) — keeps base images fresh
+#   • manual workflow_dispatch with optional version matrix override
+#
+# Secrets required
+# ─────────────────
+#   GITHUB_TOKEN — automatically provided by GitHub Actions (no manual setup)
+#
+# Image naming convention
+# ────────────────────────
+#   ghcr.io/<owner>/<repo>:ubuntu-22.04
+#   ghcr.io/<owner>/<repo>:ubuntu-22.04-<sha>
+#   ghcr.io/<owner>/<repo>:ubuntu-22.04-<date>
+#   ...same pattern for 24.04 · 25.04 · 26.04
+#   ghcr.io/<owner>/<repo>:latest  →  points to ubuntu-24.04
+# =============================================================================
+
+name: Build & Publish Ubuntu Runner Images
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - "Dockerfile"
+      - "scripts/**"
+      - ".github/workflows/build-and-publish.yml"
+
+  pull_request:
+    branches:
+      - main
+      - master
+    paths:
+      - "Dockerfile"
+      - "scripts/**"
+      - ".github/workflows/build-and-publish.yml"
+
+  schedule:
+    # Every Sunday at 00:00 UTC — keep base OS packages fresh
+    - cron: "0 0 * * 0"
+
+  workflow_dispatch:
+    inputs:
+      versions:
+        description: "Comma-separated Ubuntu versions to build (e.g. 22.04,24.04)"
+        required: false
+        default: "22.04,24.04,25.04,26.04"
+      push_images:
+        description: "Push images to GHCR?"
+        required: false
+        default: true
+        type: boolean
+      no_cache:
+        description: "Disable Docker layer cache?"
+        required: false
+        default: false
+        type: boolean
+
+# ── Concurrency: cancel in-progress runs on same ref ──────────────────────────
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# ── Top-level permissions ──────────────────────────────────────────────────────
+permissions:
+  contents: read
+  packages: write
+  security-events: write   # for Trivy SARIF upload
+  actions: read
+
+# ── Environment ───────────────────────────────────────────────────────────────
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  # Docker BuildKit
+  DOCKER_BUILDKIT: "1"
+  BUILDKIT_INLINE_CACHE: "1"
+
+# =============================================================================
+# JOBS
+# =============================================================================
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # 1. prepare — compute dynamic matrix from inputs or defaults
+  # ---------------------------------------------------------------------------
+  prepare:
+    name: Prepare Build Matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      should_push: ${{ steps.flags.outputs.should_push }}
+      date_tag: ${{ steps.flags.outputs.date_tag }}
+      short_sha: ${{ steps.flags.outputs.short_sha }}
+    steps:
+      - name: Compute matrix
+        id: matrix
+        run: |
+          # ── Resolve requested versions ──────────────────────────────────────
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && \
+             [ -n "${{ github.event.inputs.versions }}" ]; then
+            VERSIONS="${{ github.event.inputs.versions }}"
+          else
+            VERSIONS="22.04,24.04,25.04,26.04"
+          fi
+
+          # ── Build JSON matrix entries ────────────────────────────────────────
+          MATRIX_JSON='{"include":['
+          FIRST=true
+          IFS=',' read -ra VER_LIST <<< "$VERSIONS"
+          for VER in "${VER_LIST[@]}"; do
+            VER=$(echo "$VER" | xargs)   # trim whitespace
+            case "$VER" in
+              22.04) CODENAME="jammy"    ;;
+              24.04) CODENAME="noble"    ;;
+              25.04) CODENAME="plucky"   ;;
+              26.04) CODENAME="oracular" ;;
+              *) echo "::warning::Unknown version '$VER' — skipping"; continue ;;
+            esac
+            [ "$FIRST" = true ] || MATRIX_JSON+=','
+            MATRIX_JSON+="{\"ubuntu_version\":\"${VER}\",\"ubuntu_codename\":\"${CODENAME}\"}"
+            FIRST=false
+          done
+          MATRIX_JSON+=']}'
+          echo "matrix=${MATRIX_JSON}" >> "$GITHUB_OUTPUT"
+          echo "Generated matrix: ${MATRIX_JSON}"
+
+      - name: Compute build flags
+        id: flags
+        run: |
+          # ── Should we push? ──────────────────────────────────────────────────
+          # Push on: main/master push, schedule, or manual dispatch with push=true
+          if [ "${{ github.event_name }}" = "push" ] || \
+             [ "${{ github.event_name }}" = "schedule" ] || \
+             [ "${{ github.event.inputs.push_images }}" = "true" ]; then
+            SHOULD_PUSH=true
+          else
+            SHOULD_PUSH=false
+          fi
+          echo "should_push=${SHOULD_PUSH}" >> "$GITHUB_OUTPUT"
+
+          # ── Date & SHA tags ──────────────────────────────────────────────────
+          echo "date_tag=$(date -u +'%Y%m%d')"      >> "$GITHUB_OUTPUT"
+          echo "short_sha=${GITHUB_SHA::7}"          >> "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------------------
+  # 2. build-and-push — matrix job, one runner per Ubuntu version
+  # ---------------------------------------------------------------------------
+  build-and-push:
+    name: "Build ubuntu-${{ matrix.ubuntu_version }} (${{ matrix.ubuntu_codename }})"
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+
+    steps:
+      # ── Checkout ─────────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ── QEMU (multi-arch support, future-proof) ───────────────────────────────
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      # ── Docker Buildx ─────────────────────────────────────────────────────────
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: |
+            image=moby/buildkit:buildx-stable-1
+            network=host
+
+      # ── Login to GHCR (skip on PR) ────────────────────────────────────────────
+      - name: Log in to GitHub Container Registry
+        if: needs.prepare.outputs.should_push == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── Compute Docker image tags & labels ────────────────────────────────────
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: |
+            latest=false
+          tags: |
+            # Versioned tags
+            type=raw,value=ubuntu-${{ matrix.ubuntu_version }}
+            type=raw,value=ubuntu-${{ matrix.ubuntu_version }}-${{ needs.prepare.outputs.date_tag }}
+            type=raw,value=ubuntu-${{ matrix.ubuntu_version }}-${{ needs.prepare.outputs.short_sha }}
+            type=raw,value=ubuntu-${{ matrix.ubuntu_codename }}
+            # 'latest' → ubuntu-24.04 only
+            type=raw,value=latest,enable=${{ matrix.ubuntu_version == '24.04' }}
+          labels: |
+            org.opencontainers.image.title=Ubuntu ${{ matrix.ubuntu_version }} GitHub Actions Runner
+            org.opencontainers.image.description=Production-grade Ubuntu ${{ matrix.ubuntu_version }} (${{ matrix.ubuntu_codename }}) runner image
+            org.opencontainers.image.vendor=GitHub Actions Runner Project
+            org.opencontainers.image.version=${{ matrix.ubuntu_version }}
+            com.ubuntu.codename=${{ matrix.ubuntu_codename }}
+
+      # ── Build (+ push if not PR) ──────────────────────────────────────────────
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: ${{ needs.prepare.outputs.should_push == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            UBUNTU_VERSION=${{ matrix.ubuntu_version }}
+            UBUNTU_CODENAME=${{ matrix.ubuntu_codename }}
+            GITHUB_REPOSITORY=${{ github.repository }}
+          cache-from: |
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ubuntu-${{ matrix.ubuntu_version }}
+            type=gha,scope=ubuntu-${{ matrix.ubuntu_version }}
+          cache-to: |
+            type=gha,mode=max,scope=ubuntu-${{ matrix.ubuntu_version }}
+          no-cache: ${{ github.event.inputs.no_cache == 'true' }}
+          provenance: true
+          sbom: true
+
+      # ── Print image digest ────────────────────────────────────────────────────
+      - name: Image digest
+        run: |
+          echo "::notice title=ubuntu-${{ matrix.ubuntu_version }}::Digest: ${{ steps.build.outputs.digest }}"
+
+      # ── Smoke test (run the image, verify key tools are present) ─────────────
+      - name: Smoke test — verify tool availability
+        if: needs.prepare.outputs.should_push == 'true'
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ubuntu-${{ matrix.ubuntu_version }}"
+
+          echo "=== Smoke testing: ${IMAGE} ==="
+          docker pull "${IMAGE}"
+
+          run() {
+            echo "→ $*"
+            docker run --rm "${IMAGE}" bash -c "$*"
+          }
+
+          run "lsb_release -ds"
+          run "python3 --version"
+          run "node --version"
+          run "go version"
+          run "rustc --version"
+          run "java --version"
+          run "docker --version"
+          run "kubectl version --client"
+          run "helm version --short"
+          run "terraform version"
+          run "aws --version"
+          run "az --version | head -1"
+          run "gh --version | head -1"
+          run "jq --version"
+          run "yq --version"
+          run "git --version"
+          run "git-lfs version"
+
+          echo "✓ All tools verified for ubuntu-${{ matrix.ubuntu_version }}"
+
+      # ── Security scan with Trivy ──────────────────────────────────────────────
+      - name: Security scan (Trivy)
+        uses: aquasecurity/trivy-action@master
+        if: needs.prepare.outputs.should_push == 'true'
+        with:
+          image-ref: >-
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ubuntu-${{ matrix.ubuntu_version }}
+          format: sarif
+          output: trivy-${{ matrix.ubuntu_version }}.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+        continue-on-error: true   # never block publish on scan findings
+
+      - name: Upload Trivy SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always() && needs.prepare.outputs.should_push == 'true'
+        with:
+          sarif_file: trivy-${{ matrix.ubuntu_version }}.sarif
+          category: trivy-ubuntu-${{ matrix.ubuntu_version }}
+        continue-on-error: true
+
+      # ── Summary card ──────────────────────────────────────────────────────────
+      - name: Write job summary
+        if: always()
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## Ubuntu ${{ matrix.ubuntu_version }} (${{ matrix.ubuntu_codename }})
+
+          | Field        | Value |
+          |---|---|
+          | Status       | ${{ job.status }} |
+          | Pushed       | ${{ needs.prepare.outputs.should_push }} |
+          | Digest       | \`${{ steps.build.outputs.digest }}\` |
+          | Date tag     | \`ubuntu-${{ matrix.ubuntu_version }}-${{ needs.prepare.outputs.date_tag }}\` |
+          | SHA tag      | \`ubuntu-${{ matrix.ubuntu_version }}-${{ needs.prepare.outputs.short_sha }}\` |
+
+          ### Pull command
+          \`\`\`bash
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ubuntu-${{ matrix.ubuntu_version }}
+          \`\`\`
+          EOF
+
+  # ---------------------------------------------------------------------------
+  # 3. manifest — optional multi-arch / alias manifest (runs after all builds)
+  # ---------------------------------------------------------------------------
+  manifest:
+    name: Update Image Index / Manifest
+    needs: [prepare, build-and-push]
+    runs-on: ubuntu-latest
+    if: needs.prepare.outputs.should_push == 'true'
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Write workflow summary — all images
+        run: |
+          REPO="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+
+          ---
+          ## 📦 Published Images
+
+          | Tag | Pull command |
+          |---|---|
+          | \`ubuntu-22.04\` | \`docker pull ${REPO}:ubuntu-22.04\` |
+          | \`ubuntu-24.04\` | \`docker pull ${REPO}:ubuntu-24.04\` |
+          | \`ubuntu-25.04\` | \`docker pull ${REPO}:ubuntu-25.04\` |
+          | \`ubuntu-26.04\` | \`docker pull ${REPO}:ubuntu-26.04\` |
+          | \`latest\`       | \`docker pull ${REPO}:latest\` (→ 24.04) |
+
+          > Built on: $(date -u +'%Y-%m-%d %H:%M UTC')
+          > Commit: \`${{ needs.prepare.outputs.short_sha }}\`
+          EOF
+
+  # ---------------------------------------------------------------------------
+  # 4. notify — single final status check (used for branch protection rules)
+  # ---------------------------------------------------------------------------
+  status:
+    name: Pipeline Status
+    needs: [prepare, build-and-push]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check matrix outcomes
+        run: |
+          RESULT="${{ needs.build-and-push.result }}"
+          echo "Matrix result: ${RESULT}"
+          if [ "$RESULT" = "failure" ] || [ "$RESULT" = "cancelled" ]; then
+            echo "::error::One or more image builds failed. See individual job logs."
+            exit 1
+          fi
+          echo "✓ All builds completed successfully."
