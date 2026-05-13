@@ -21,10 +21,12 @@ PLATFORM     ?= linux/amd64
 NO_CACHE     ?=
 
 # Codename lookup
-codename_22.04 = jammy
-codename_24.04 = noble
-codename_25.04 = plucky
-codename_26.04 = oracular
+codename_22_04=jammy
+codename_24_04=noble
+codename_24_10=oracular
+codename_25_04=plucky
+codename_25_10=questing
+codename_26_04=resolute
 CODENAME      := $(codename_$(VERSION))
 
 BUILD_ARGS    := \
