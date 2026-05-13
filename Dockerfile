@@ -161,15 +161,7 @@ RUN apt-get update -qq && \
         python3-setuptools \
         python3-wheel \
         pipx \
-    && python3 -m pip install --break-system-packages --upgrade pip setuptools wheel --break-system-packages 2>/dev/null || \
-       python3 -m pip install --break-system-packages --upgrade pip setuptools wheel \
-    && python3 -m pip install --break-system-packages \
-        virtualenv \
-        tox \
-        pytest \
-        ansible-core \
-        2>/dev/null || \
-       python3 -m pip install virtualenv tox pytest ansible-core \
+    && python3 -m pip install --break-system-packages --upgrade pip setuptools wheel 2>/dev/null
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # ── Go ────────────────────────────────────────────────────────────────────
