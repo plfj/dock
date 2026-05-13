@@ -161,7 +161,8 @@ RUN apt-get update -qq && \
         python3-venv \
         python3-setuptools \
         python3-wheel \
-        pipx
+        pipx && \
+    apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
 # ── Go ────────────────────────────────────────────────────────────────────
