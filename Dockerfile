@@ -274,9 +274,17 @@ RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # ── Packer ───────────────────────────────────────────────────────────────
-RUN apt-get update -qq && \
-    apt-get install -y --no-install-recommends packer && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN set -euxo; \
+    install -d /usr/share/keyrings; \
+    wget -qO - https://apt.releases.hashicorp.com/gpg \
+        | gpg --dearmor -o /usr/share/keyrings/hashicorp.gpg; \
+    echo "deb [signed-by=/usr/share/keyrings/hashicorp.gpg] \
+        https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
+        > /etc/apt/sources.list.d/hashicorp.list; \
+    apt-get update -qq; \
+    apt-get install -y --no-install-recommends packer; \
+    apt-get clean; \
+    rm -rf /var/lib/apt/lists/*
 
 # ── Skopeo & Podman CLI ───────────────────────────────────────────────────
 RUN apt-get update -qq && \
