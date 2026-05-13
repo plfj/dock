@@ -186,16 +186,20 @@ RUN curl -fsSL https://sh.rustup.rs | \
     chmod -R a+w /opt/cargo /opt/rustup
 
 # ── Java (Temurin via Adoptium) ───────────────────────────────────────────
-RUN wget -qO - https://packages.adoptium.net/artifactory/api/gpg/key/public \
-        | gpg --dearmor -o /etc/apt/keyrings/adoptium.gpg && \
-    echo "deb [signed-by=/etc/apt/keyrings/adoptium.gpg] \
-        https://packages.adoptium.net/artifactory/deb \
-        $(awk -F= '/^VERSION_CODENAME/{print $2}' /etc/os-release) main" \
-        > /etc/apt/sources.list.d/adoptium.list && \
-    apt-get update -qq && \
-    apt-get install -y --no-install-recommends temurin-21-jdk && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
-
+RUN set -eux; \
+    install -d /etc/apt/keyrings; \
+    wget -qO - https://packages.adoptium.net/artifactory/api/gpg/key/public \
+        | gpg --dearmor -o /etc/apt/keyrings/adoptium.gpg; \
+    CODENAME="$(. /etc/os-release && echo "$VERSION_CODENAME")"; \
+    case "$CODENAME" in \
+        plucky|questing|resolute|oracular) CODENAME=noble ;; \
+    esac; \
+    echo "deb [signed-by=/etc/apt/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb ${CODENAME} main" \
+        > /etc/apt/sources.list.d/adoptium.list; \
+    apt-get update -qq; \
+    apt-get install -y --no-install-recommends temurin-21-jdk; \
+    apt-get clean; \
+    rm -rf /var/lib/apt/lists/*
 ENV JAVA_HOME=/usr/lib/jvm/temurin-21-amd64
 
 # ── Docker CLI (rootless-compatible) ─────────────────────────────────────
