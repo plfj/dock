@@ -162,8 +162,6 @@ RUN apt-get update -qq && \
         python3-setuptools \
         python3-wheel \
         pipx && \
-    python3 -m pip install --break-system-packages --upgrade pip setuptools wheel && \
-    apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
 # ── Go ────────────────────────────────────────────────────────────────────
