@@ -15,6 +15,7 @@
 
 ARG UBUNTU_VERSION=24.04
 ARG UBUNTU_CODENAME=noble
+ARG GITHUB_REPOSITORY=plfj/dock
 
 # ---------------------------------------------------------------------------
 # Stage 1 — base: OS packages identical to GitHub-hosted ubuntu-* runners
@@ -145,7 +146,7 @@ ARG UBUNTU_VERSION
 ARG UBUNTU_CODENAME
 
 # ── Node.js (LTS via NodeSource) ──────────────────────────────────────────
-ARG NODE_MAJOR=20
+ARG NODE_MAJOR=24
 RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     npm install -g npm@latest yarn pnpm && \
@@ -160,12 +161,13 @@ RUN apt-get update -qq && \
         python3-venv \
         python3-setuptools \
         python3-wheel \
-        pipx \
-    && python3 -m pip install --break-system-packages --upgrade pip setuptools wheel 2>/dev/null
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+        pipx && \
+    python3 -m pip install --break-system-packages --upgrade pip setuptools wheel && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # ── Go ────────────────────────────────────────────────────────────────────
-ARG GO_VERSION=1.22.4
+ARG GO_VERSION=1.26.3
 RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" \
         | tar -C /usr/local -xz && \
     ln -sf /usr/local/go/bin/go   /usr/local/bin/go && \
@@ -279,14 +281,14 @@ RUN apt-get update -qq && \
     apt-get clean && rm -rf /var/lib/apt/lists/* || true
 
 # ── yq ────────────────────────────────────────────────────────────────────
-ARG YQ_VERSION=v4.44.2
+ARG YQ_VERSION=v4.53.2
 RUN curl -fsSL \
         "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64" \
         -o /usr/local/bin/yq && \
     chmod +x /usr/local/bin/yq
 
 # ── GitHub Actions runner (act) ───────────────────────────────────────────
-ARG ACT_VERSION=0.2.61
+ARG ACT_VERSION=0.2.88
 RUN curl -fsSL \
         "https://github.com/nektos/act/releases/download/v${ACT_VERSION}/act_Linux_x86_64.tar.gz" \
         | tar -C /usr/local/bin -xz act && \
