@@ -1,0 +1,46 @@
+# =============================================================================
+# .dockerignore
+# =============================================================================
+
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# CI / workflow files (not needed in image)
+.github/
+
+# Documentation
+docs/
+*.md
+LICENSE
+
+# Local dev artifacts
+.env
+.env.*
+*.log
+*.pid
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Node
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+
+# Test output
+test-results/
+coverage/
+*.sarif
