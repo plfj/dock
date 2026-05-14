@@ -232,16 +232,25 @@ RUN curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key \
 RUN curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
 # ── Terraform ────────────────────────────────────────────────────────────
-RUN wget -qO - https://apt.releases.hashicorp.com/gpg \
-        | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] \
-        https://apt.releases.hashicorp.com \
-        $(lsb_release -cs) main" \
-        > /etc/apt/sources.list.d/hashicorp.list && \
-    apt-get update -qq && \
-    apt-get install -y --no-install-recommends terraform && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+ARG TERRAFORM_VERSION=1.15.3
 
+RUN set -eux; \
+    ARCH="$(dpkg --print-architecture)"; \
+    case "$ARCH" in \
+        amd64) TF_ARCH=amd64 ;; \
+        arm64) TF_ARCH=arm64 ;; \
+        armhf) TF_ARCH=arm ;; \
+        i386) TF_ARCH=386 ;; \
+        *) echo "Unsupported architecture: $ARCH"; exit 1 ;; \
+    esac; \
+    wget -qO /tmp/terraform.zip \
+      "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_${TF_ARCH}.zip"; \
+    apt-get update -qq; \
+    apt-get install -y --no-install-recommends unzip; \
+    unzip -q /tmp/terraform.zip -d /usr/local/bin; \
+    chmod +x /usr/local/bin/terraform; \
+    rm -f /tmp/terraform.zip; \
+    terraform version
 # ── GitHub CLI ───────────────────────────────────────────────────────────
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
@@ -274,18 +283,24 @@ RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # ── Packer ───────────────────────────────────────────────────────────────
-RUN set -euxo; \
-    install -d /usr/share/keyrings; \
-    wget -qO - https://apt.releases.hashicorp.com/gpg \
-        | gpg --dearmor -o /usr/share/keyrings/hashicorp.gpg; \
-    echo "deb [signed-by=/usr/share/keyrings/hashicorp.gpg] \
-        https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
-        > /etc/apt/sources.list.d/hashicorp.list; \
+ARG PACKER_VERSION=1.15.3
+RUN set -eux; \
+    ARCH="$(dpkg --print-architecture)"; \
+    case "$ARCH" in \
+        amd64) PK_ARCH=amd64 ;; \
+        arm64) PK_ARCH=arm64 ;; \
+        armhf) PK_ARCH=arm ;; \
+        i386) PK_ARCH=386 ;; \
+        *) echo "Unsupported architecture: $ARCH"; exit 1 ;; \
+    esac; \
+    wget -qO /tmp/packer.zip \
+      "https://releases.hashicorp.com/packer/${PACKER_VERSION}/packer_${PACKER_VERSION}_linux_${PK_ARCH}.zip"; \
     apt-get update -qq; \
-    apt-get install -y --no-install-recommends packer; \
-    apt-get clean; \
-    rm -rf /var/lib/apt/lists/*
-
+    apt-get install -y --no-install-recommends unzip; \
+    unzip -q /tmp/packer.zip -d /usr/local/bin; \
+    chmod +x /usr/local/bin/packer; \
+    rm -f /tmp/packer.zip; \
+    packer version
 # ── Skopeo & Podman CLI ───────────────────────────────────────────────────
 RUN apt-get update -qq && \
     apt-get install -y --no-install-recommends skopeo podman && \
