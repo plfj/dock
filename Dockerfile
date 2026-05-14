@@ -284,6 +284,7 @@ RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] \
 
 # ── Packer ───────────────────────────────────────────────────────────────
 ARG PACKER_VERSION=1.15.3
+
 RUN set -eux; \
     ARCH="$(dpkg --print-architecture)"; \
     case "$ARCH" in \
@@ -295,9 +296,7 @@ RUN set -eux; \
     esac; \
     wget -qO /tmp/packer.zip \
       "https://releases.hashicorp.com/packer/${PACKER_VERSION}/packer_${PACKER_VERSION}_linux_${PK_ARCH}.zip"; \
-    apt-get update -qq; \
-    apt-get install -y --no-install-recommends unzip; \
-    unzip -q /tmp/packer.zip -d /usr/local/bin; \
+    unzip -q /tmp/packer.zip packer -d /usr/local/bin; \
     chmod +x /usr/local/bin/packer; \
     rm -f /tmp/packer.zip; \
     packer version
